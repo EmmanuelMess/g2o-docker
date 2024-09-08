@@ -16,10 +16,8 @@ include_directories(
 )
 
 add_executable(${PROJECT_NAME}
-    simulator.h
-    simulator.cpp
-    g2o_tutorial_slam2d_api.h
     tutorial_slam2d.cpp
+    continuous_to_discrete.h
 )
 
 target_link_libraries(${PROJECT_NAME}

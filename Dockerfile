@@ -6,6 +6,13 @@ RUN apt update && \
     apt install -y git build-essential cmake gcc ninja-build gdb && \
     rm -rf /var/lib/apt/lists/*
 
+# CMake
+ADD https://cmake.org/files/v3.24/cmake-3.24.4-linux-x86_64.sh /tmp/cmake-3.24.4-linux-x86_64.sh
+RUN mkdir /opt/cmake
+RUN sh /tmp/cmake-3.24.4-linux-x86_64.sh --prefix=/opt/cmake --skip-license
+RUN ln -s /opt/cmake/bin/cmake /usr/local/bin/cmake
+RUN cmake --version
+
 # eigen
 RUN apt update && \
     apt install -y libeigen3-dev && \

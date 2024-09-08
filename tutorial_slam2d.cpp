@@ -1,5 +1,5 @@
 // g2o - General Graph Optimization
-// Copyright (C) 2011 R. Kuemmerle, G. Grisetti, W. Burgard
+// Copyright (C) 2011 R. Kuemmerle, G. Grisetti, H. Strasdat, W. Burgard
 // All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
@@ -24,131 +24,157 @@
 // NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#include <cmath>
+// This example consists of a single constant velocity target which
+// moves under piecewise constant velocity in 3D. Its position is
+// measured by an idealised GPS receiver.
+
+#include <g2o/core/block_solver.h>
+#include <g2o/core/optimization_algorithm_gauss_newton.h>
+#include <g2o/core/solver.h>
+#include <g2o/core/sparse_optimizer.h>
+#include <g2o/solvers/eigen/linear_solver_eigen.h>
+#include <g2o/solvers/pcg/linear_solver_pcg.h>
+#include <g2o/stuff/sampler.h>
+#include <stdint.h>
+
 #include <iostream>
 
-#include "g2o/core/block_solver.h"
-#include "g2o/core/factory.h"
-#include "g2o/core/optimization_algorithm_factory.h"
-#include "g2o/core/optimization_algorithm_gauss_newton.h"
-#include "g2o/core/sparse_optimizer.h"
-#include "g2o/solvers/eigen/linear_solver_eigen.h"
-#include "g2o/types/slam2d/edge_se2.h"
-#include "g2o/types/slam2d/edge_se2_pointxy.h"
-#include "g2o/types/slam2d/vertex_se2.h"
-#include "g2o/types/slam2d/vertex_point_xy.h"
-#include "g2o/types/slam2d/parameter_se2_offset.h"
-#include "simulator.h"
+#include "continuous_to_discrete.h"
+#include "targetTypes6D.hpp"
 
+using namespace Eigen;
 using namespace std;
 using namespace g2o;
-using namespace g2o::tutorial;
 
 int main() {
-  // TODO simulate different sensor offset
-  // simulate a robot observing landmarks while travelling on a grid
-  SE2 sensorOffsetTransf(0.2, 0.1, -0.1);
-  int numNodes = 300;
-  Simulator simulator;
-  simulator.simulate(numNodes, sensorOffsetTransf);
+	// Set up the parameters of the simulation
+	int numberOfTimeSteps = 1000;
+	const double processNoiseSigma = 1;
+	const double accelerometerNoiseSigma = 1;
+	const double gpsNoiseSigma = 1;
+	const double dt = 1;
 
-  /*********************************************************************************
-   * creating the optimization problem
-   ********************************************************************************/
+	// Set up the optimiser and block solver
+	SparseOptimizer optimizer;
+	optimizer.setVerbose(false);
 
-  typedef BlockSolver<BlockSolverTraits<-1, -1> > SlamBlockSolver;
-  typedef LinearSolverEigen<SlamBlockSolver::PoseMatrixType> SlamLinearSolver;
+	typedef BlockSolver<BlockSolverTraits<6, 6>> BlockSolver;
 
-  // allocating the optimizer
-  SparseOptimizer optimizer;
-  auto linearSolver = std::make_unique<SlamLinearSolver>();
-  linearSolver->setBlockOrdering(false);
-  OptimizationAlgorithmGaussNewton* solver =
-      new OptimizationAlgorithmGaussNewton(
-          std::make_unique<SlamBlockSolver>(std::move(linearSolver)));
+	OptimizationAlgorithm* optimizationAlgorithm =
+		new OptimizationAlgorithmGaussNewton(std::make_unique<BlockSolver>(
+			std::make_unique<LinearSolverEigen<BlockSolver::PoseMatrixType>>()));
 
-  optimizer.setAlgorithm(solver);
+	optimizer.setAlgorithm(optimizationAlgorithm);
 
-  // add the parameter representing the sensor offset
-  ParameterSE2Offset* sensorOffset = new ParameterSE2Offset;
-  sensorOffset->setOffset(sensorOffsetTransf);
-  sensorOffset->setId(0);
-  optimizer.addParameter(sensorOffset);
+	// Sample the start location of the target
+	Vector6d state;
+	state.setZero();
+	for (int k = 0; k < 3; k++) {
+		state[k] = 1000 * sampleGaussian();
+	}
 
-  // adding the odometry to the optimizer
-  // first adding all the vertices
-  cerr << "Optimization: Adding robot poses ... ";
-  for (size_t i = 0; i < simulator.poses().size(); ++i) {
-    const Simulator::GridPose& p = simulator.poses()[i];
-    const SE2& t = p.simulatorPose;
-    VertexSE2* robot = new VertexSE2;
-    robot->setId(p.id);
-    robot->setEstimate(t);
-    optimizer.addVertex(robot);
-  }
-  cerr << "done." << endl;
+	// Construct the first vertex; this corresponds to the initial
+	// condition and register it with the optimiser
+	VertexPositionVelocity3D* stateNode = new VertexPositionVelocity3D();
+	stateNode->setEstimate(state);
+	stateNode->setId(0);
+	optimizer.addVertex(stateNode);
 
-  // second add the odometry constraints
-  cerr << "Optimization: Adding odometry measurements ... ";
-  for (size_t i = 0; i < simulator.odometry().size(); ++i) {
-    const Simulator::GridEdge& simEdge = simulator.odometry()[i];
+	// Set up last estimate
+	VertexPositionVelocity3D* lastStateNode = stateNode;
 
-    EdgeSE2* odometry = new EdgeSE2;
-    odometry->vertices()[0] = optimizer.vertex(simEdge.from);
-    odometry->vertices()[1] = optimizer.vertex(simEdge.to);
-    odometry->setMeasurement(simEdge.simulatorTransf);
-    odometry->setInformation(simEdge.information);
-    optimizer.addEdge(odometry);
-  }
-  cerr << "done." << endl;
+	// Iterate over the simulation steps
+	for (int k = 1; k <= numberOfTimeSteps; ++k) {
+		// Simulate the next step; update the state and compute the observation
+		Vector3d processNoise(processNoiseSigma * sampleGaussian(),
+		                      processNoiseSigma * sampleGaussian(),
+		                      processNoiseSigma * sampleGaussian());
 
-  // add the landmark observations
-  cerr << "Optimization: add landmark vertices ... ";
-  for (size_t i = 0; i < simulator.landmarks().size(); ++i) {
-    const Simulator::Landmark& l = simulator.landmarks()[i];
-    VertexPointXY* landmark = new VertexPointXY;
-    landmark->setId(l.id);
-    landmark->setEstimate(l.simulatedPose);
-    optimizer.addVertex(landmark);
-  }
-  cerr << "done." << endl;
+		for (int m = 0; m < 3; m++) {
+			state[m] += dt * (state[m + 3] + 0.5 * dt * processNoise[m]);
+		}
 
-  cerr << "Optimization: add landmark observations ... ";
-  for (size_t i = 0; i < simulator.landmarkObservations().size(); ++i) {
-    const Simulator::LandmarkEdge& simEdge =
-        simulator.landmarkObservations()[i];
-    EdgeSE2PointXY* landmarkObservation = new EdgeSE2PointXY;
-    landmarkObservation->vertices()[0] = optimizer.vertex(simEdge.from);
-    landmarkObservation->vertices()[1] = optimizer.vertex(simEdge.to);
-    landmarkObservation->setMeasurement(simEdge.simulatorMeas);
-    landmarkObservation->setInformation(simEdge.information);
-    landmarkObservation->setParameterId(0, sensorOffset->id());
-    optimizer.addEdge(landmarkObservation);
-  }
-  cerr << "done." << endl;
+		for (int m = 0; m < 3; m++) {
+			state[m + 3] += dt * processNoise[m];
+		}
 
-  /*********************************************************************************
-   * optimization
-   ********************************************************************************/
+		// Construct the accelerometer measurement
+		Vector3d accelerometerMeasurement;
+		for (int m = 0; m < 3; m++) {
+			accelerometerMeasurement[m] =
+				processNoise[m] + accelerometerNoiseSigma * sampleGaussian();
+		}
 
-  // dump initial state to the disk
-  optimizer.save("tutorial_before.g2o");
+		// Construct the GPS observation
+		Vector3d gpsMeasurement;
+		for (int m = 0; m < 3; m++) {
+			gpsMeasurement[m] = state[m] + gpsNoiseSigma * sampleGaussian();
+		}
 
-  // prepare and run the optimization
-  // fix the first robot pose to account for gauge freedom
-  VertexSE2* firstRobotPose = dynamic_cast<VertexSE2*>(optimizer.vertex(0));
-  firstRobotPose->setFixed(true);
-  optimizer.setVerbose(true);
+		// Construct vertex which corresponds to the current state of the target
+		VertexPositionVelocity3D* stateNode = new VertexPositionVelocity3D();
 
-  cerr << "Optimizing" << endl;
-  optimizer.initializeOptimization();
-  optimizer.optimize(10);
-  cerr << "done." << endl;
+		stateNode->setId(k);
+		stateNode->setMarginalized(false);
+		optimizer.addVertex(stateNode);
 
-  optimizer.save("tutorial_after.g2o");
+		TargetOdometry3DEdge* toe =
+			new TargetOdometry3DEdge(dt, accelerometerNoiseSigma);
+		toe->setVertex(0, lastStateNode);
+		toe->setVertex(1, stateNode);
+		VertexPositionVelocity3D* vPrev =
+			dynamic_cast<VertexPositionVelocity3D*>(lastStateNode);
+		VertexPositionVelocity3D* vCurr =
+			dynamic_cast<VertexPositionVelocity3D*>(stateNode);
+		toe->setMeasurement(accelerometerMeasurement);
+		optimizer.addEdge(toe);
 
-  // freeing the graph memory
-  optimizer.clear();
+		// compute the initial guess via the odometry
+		g2o::OptimizableGraph::VertexSet vPrevSet;
+		vPrevSet.insert(vPrev);
+		toe->initialEstimate(vPrevSet, vCurr);
 
-  return 0;
+		lastStateNode = stateNode;
+
+		// Add the GPS observation
+		GPSObservationEdgePositionVelocity3D* goe =
+			new GPSObservationEdgePositionVelocity3D(gpsMeasurement, gpsNoiseSigma);
+		goe->setVertex(0, stateNode);
+		optimizer.addEdge(goe);
+	}
+
+	// Configure and set things going
+	optimizer.initializeOptimization();
+	optimizer.setVerbose(true);
+	optimizer.optimize(5);
+	cerr << "number of vertices:" << optimizer.vertices().size() << endl;
+	cerr << "number of edges:" << optimizer.edges().size() << endl;
+
+	optimizer.save("out.g2o");
+
+	// Print the results
+
+	cout << "state=\n" << state << endl;
+
+#if 0
+	for (int k = 0; k < numberOfTimeSteps; k++)
+    {
+      cout << "computed estimate " << k << "\n"
+           << dynamic_cast<VertexPositionVelocity3D*>(optimizer.vertices().find(k)->second)->estimate() << endl;
+       }
+#endif
+
+	Vector6d v1 = dynamic_cast<VertexPositionVelocity3D*>(
+		optimizer.vertices()
+			.find((std::max)(numberOfTimeSteps - 2, 0))
+			->second)
+		->estimate();
+	Vector6d v2 = dynamic_cast<VertexPositionVelocity3D*>(
+		optimizer.vertices()
+			.find((std::max)(numberOfTimeSteps - 1, 0))
+			->second)
+		->estimate();
+	cout << "v1=\n" << v1 << endl;
+	cout << "v2=\n" << v2 << endl;
+	cout << "delta state=\n" << v2 - v1 << endl;
 }
