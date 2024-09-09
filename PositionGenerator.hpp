@@ -9,13 +9,15 @@ public:
 
 	void next();
 
-	Vector6d getPosition() const;
-	Eigen::Vector3d getProcessNoise() const;
+	[[nodiscard]] Eigen::Vector3d getPosition() const;
+	[[nodiscard]] Eigen::Vector3d getVelocity() const;
+	[[nodiscard]] Eigen::Vector3d getProcessNoise() const;
 
 private:
 	double processNoiseSigma;
 	double dt;
-	Vector6d currentState;
+	Eigen::Vector3d position;
+	Eigen::Vector3d velocity;
 	Eigen::Vector3d processNoise;
 };
 

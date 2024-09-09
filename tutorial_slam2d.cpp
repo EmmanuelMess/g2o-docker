@@ -62,7 +62,7 @@ int main() {
 	const double gpsNoiseSigma = 1;
 	const double dt = 1;
 
-	PositionGenerator position(processNoiseSigma, dt);
+	PositionGenerator positionGenerator(processNoiseSigma, dt);
 
 	SparseOptimizer optimizer;
 	{
@@ -80,14 +80,12 @@ int main() {
 
 	// Set up last estimate
 	VertexPositionVelocity3D *lastStateNode;
-	Vector6d state;
 
 	{
-		// Sample the start location of the target
+		Vector6d state;
 		state.setZero();
-		for (int k = 0; k < 3; k++) {
-			state[k] = 1000 * sampleGaussian();
-		}
+		state.head(3) = positionGenerator.getPosition();
+		state.tail(3) = positionGenerator.getVelocity();
 
 		// Construct the first vertex; this corresponds to the initial
 		// condition and register it with the optimiser
@@ -102,19 +100,23 @@ int main() {
 
 	// Iterate over the simulation steps
 	for (int k = 1; k <= numberOfTimeSteps; ++k) {
+		std::cout << "iteration " << k << " time " << (dt * k) << "\n";
+
 		// Simulate the next step; update the state and compute the observation
-		position.next();
+		positionGenerator.next();
 
 		// Construct the accelerometer measurement
-		const Vector3d accelerometerNoise = { accelerometerNoiseSigma * sampleGaussian(), accelerometerNoiseSigma * sampleGaussian(), accelerometerNoiseSigma * sampleGaussian() };
-		const Vector3d accelerometerMeasurement = position.getProcessNoise().head(3) + accelerometerNoise;
+		const Vector3d accelerometerNoise(sampleGaussian(), sampleGaussian(), sampleGaussian());
+		const Vector3d accelerometerMeasurement = positionGenerator.getProcessNoise() + accelerometerNoiseSigma * accelerometerNoise;
 
 		// Construct the GPS observation
-		const Vector3d gpsNoise = { gpsNoiseSigma * sampleGaussian(), gpsNoiseSigma * sampleGaussian(), gpsNoiseSigma * sampleGaussian() };
-		const Vector3d gpsMeasurement = state.head(3) + gpsNoise;
+		const Vector3d gpsNoise(sampleGaussian(), sampleGaussian(), sampleGaussian());
+		const Vector3d gpsMeasurement = positionGenerator.getPosition() + gpsNoiseSigma * gpsNoise;
 
 		std::cout << "position ";
-		printVector(position.getPosition());
+		printVector(positionGenerator.getPosition());
+		std::cout << "velocity ";
+		printVector(positionGenerator.getVelocity());
 		std::cout << "accelerometer ";
 		printVector(accelerometerMeasurement);
 		std::cout << "gps ";
@@ -160,7 +162,7 @@ int main() {
 	// Print the results
 
 	std::cout << "state=";
-	printVector(state);
+	printVector(positionGenerator.getPosition());
 
 	Vector6d v1 = dynamic_cast<VertexPositionVelocity3D *>(optimizer.vertices().find((std::max)(numberOfTimeSteps - 2, 0))->second)->estimate();
 	Vector6d v2 = dynamic_cast<VertexPositionVelocity3D *>(optimizer.vertices().find((std::max)(numberOfTimeSteps - 1, 0))->second)->estimate();
