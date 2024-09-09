@@ -13,29 +13,6 @@ using namespace g2o;
 typedef Eigen::Matrix<double, 6, 1> Vector6d;
 typedef Eigen::Matrix<double, 6, 6> Matrix6d;
 
-// This header file specifies a set of types for the different
-// tracking examples; note that
-
-class VertexPosition3D : public g2o::BaseVertex<3, Eigen::Vector3d> {
-public:
-	EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-	VertexPosition3D() {}
-
-	virtual void setToOriginImpl() { _estimate.setZero(); }
-
-	virtual void oplusImpl(const double* update) {
-		_estimate[0] += update[0];
-		_estimate[1] += update[1];
-		_estimate[2] += update[2];
-	}
-
-	virtual bool read(std::istream& /*is*/) { return false; }
-
-	virtual bool write(std::ostream& /*os*/) const { return false; }
-};
-
-class PositionVelocity3DEdge {};
-
 class VertexPositionVelocity3D : public g2o::BaseVertex<6, Vector6d> {
 public:
 	EIGEN_MAKE_ALIGNED_OPERATOR_NEW

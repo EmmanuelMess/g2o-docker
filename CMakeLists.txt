@@ -17,7 +17,6 @@ include_directories(
 
 add_executable(${PROJECT_NAME}
     tutorial_slam2d.cpp
-    continuous_to_discrete.h
 )
 
 target_link_libraries(${PROJECT_NAME}

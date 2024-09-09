@@ -33,13 +33,10 @@
 #include <g2o/core/solver.h>
 #include <g2o/core/sparse_optimizer.h>
 #include <g2o/solvers/eigen/linear_solver_eigen.h>
-#include <g2o/solvers/pcg/linear_solver_pcg.h>
 #include <g2o/stuff/sampler.h>
-#include <stdint.h>
 
 #include <iostream>
 
-#include "continuous_to_discrete.h"
 #include "targetTypes6D.hpp"
 
 using namespace Eigen;
@@ -54,34 +51,41 @@ int main() {
 	const double gpsNoiseSigma = 1;
 	const double dt = 1;
 
-	// Set up the optimiser and block solver
 	SparseOptimizer optimizer;
-	optimizer.setVerbose(false);
+	{
+		// Set up the optimiser and block solver
+		optimizer.setVerbose(true);
 
-	typedef BlockSolver<BlockSolverTraits<6, 6>> BlockSolver;
+		typedef BlockSolver<BlockSolverTraits<6, 6>> BlockSolver;
 
-	OptimizationAlgorithm* optimizationAlgorithm =
-		new OptimizationAlgorithmGaussNewton(std::make_unique<BlockSolver>(
-			std::make_unique<LinearSolverEigen<BlockSolver::PoseMatrixType>>()));
+		OptimizationAlgorithm *optimizationAlgorithm =
+			new OptimizationAlgorithmGaussNewton(std::make_unique<BlockSolver>(
+				std::make_unique<LinearSolverEigen<BlockSolver::PoseMatrixType>>()));
 
-	optimizer.setAlgorithm(optimizationAlgorithm);
-
-	// Sample the start location of the target
-	Vector6d state;
-	state.setZero();
-	for (int k = 0; k < 3; k++) {
-		state[k] = 1000 * sampleGaussian();
+		optimizer.setAlgorithm(optimizationAlgorithm);
 	}
 
-	// Construct the first vertex; this corresponds to the initial
-	// condition and register it with the optimiser
-	VertexPositionVelocity3D* stateNode = new VertexPositionVelocity3D();
-	stateNode->setEstimate(state);
-	stateNode->setId(0);
-	optimizer.addVertex(stateNode);
-
 	// Set up last estimate
-	VertexPositionVelocity3D* lastStateNode = stateNode;
+	VertexPositionVelocity3D *lastStateNode;
+	Vector6d state;
+
+	{
+		// Sample the start location of the target
+		state.setZero();
+		for (int k = 0; k < 3; k++) {
+			state[k] = 1000 * sampleGaussian();
+		}
+
+		// Construct the first vertex; this corresponds to the initial
+		// condition and register it with the optimiser
+		auto stateNode = new VertexPositionVelocity3D();
+		stateNode->setEstimate(state);
+		stateNode->setId(0);
+		optimizer.addVertex(stateNode);
+
+		// Set up last estimate
+		lastStateNode = stateNode;
+	}
 
 	// Iterate over the simulation steps
 	for (int k = 1; k <= numberOfTimeSteps; ++k) {
@@ -112,20 +116,17 @@ int main() {
 		}
 
 		// Construct vertex which corresponds to the current state of the target
-		VertexPositionVelocity3D* stateNode = new VertexPositionVelocity3D();
+		auto stateNode = new VertexPositionVelocity3D();
 
 		stateNode->setId(k);
 		stateNode->setMarginalized(false);
 		optimizer.addVertex(stateNode);
 
-		TargetOdometry3DEdge* toe =
-			new TargetOdometry3DEdge(dt, accelerometerNoiseSigma);
+		auto toe = new TargetOdometry3DEdge(dt, accelerometerNoiseSigma);
 		toe->setVertex(0, lastStateNode);
 		toe->setVertex(1, stateNode);
-		VertexPositionVelocity3D* vPrev =
-			dynamic_cast<VertexPositionVelocity3D*>(lastStateNode);
-		VertexPositionVelocity3D* vCurr =
-			dynamic_cast<VertexPositionVelocity3D*>(stateNode);
+		auto vPrev = dynamic_cast<VertexPositionVelocity3D *>(lastStateNode);
+		auto vCurr = dynamic_cast<VertexPositionVelocity3D *>(stateNode);
 		toe->setMeasurement(accelerometerMeasurement);
 		optimizer.addEdge(toe);
 
@@ -137,8 +138,7 @@ int main() {
 		lastStateNode = stateNode;
 
 		// Add the GPS observation
-		GPSObservationEdgePositionVelocity3D* goe =
-			new GPSObservationEdgePositionVelocity3D(gpsMeasurement, gpsNoiseSigma);
+		auto goe = new GPSObservationEdgePositionVelocity3D(gpsMeasurement, gpsNoiseSigma);
 		goe->setVertex(0, stateNode);
 		optimizer.addEdge(goe);
 	}
@@ -157,23 +157,14 @@ int main() {
 	cout << "state=\n" << state << endl;
 
 #if 0
-	for (int k = 0; k < numberOfTimeSteps; k++)
-    {
-      cout << "computed estimate " << k << "\n"
-           << dynamic_cast<VertexPositionVelocity3D*>(optimizer.vertices().find(k)->second)->estimate() << endl;
-       }
+	for (int k = 0; k < numberOfTimeSteps; k++) {
+		std::cout << "computed estimate " << k << '\n';
+		std::cout << dynamic_cast<VertexPositionVelocity3D*>(optimizer.vertices().find(k)->second)->estimate() << '\n';
+	}
 #endif
 
-	Vector6d v1 = dynamic_cast<VertexPositionVelocity3D*>(
-		optimizer.vertices()
-			.find((std::max)(numberOfTimeSteps - 2, 0))
-			->second)
-		->estimate();
-	Vector6d v2 = dynamic_cast<VertexPositionVelocity3D*>(
-		optimizer.vertices()
-			.find((std::max)(numberOfTimeSteps - 1, 0))
-			->second)
-		->estimate();
+	Vector6d v1 = dynamic_cast<VertexPositionVelocity3D *>(optimizer.vertices().find((std::max)(numberOfTimeSteps - 2, 0))->second)->estimate();
+	Vector6d v2 = dynamic_cast<VertexPositionVelocity3D *>(optimizer.vertices().find((std::max)(numberOfTimeSteps - 1, 0))->second)->estimate();
 	cout << "v1=\n" << v1 << endl;
 	cout << "v2=\n" << v2 << endl;
 	cout << "delta state=\n" << v2 - v1 << endl;
