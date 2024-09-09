@@ -16,17 +16,17 @@ typedef Eigen::Matrix<double, 6, 6> Matrix6d;
 class VertexPositionVelocity3D : public g2o::BaseVertex<6, Vector6d> {
 public:
 	EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-	VertexPositionVelocity3D() {}
+	VertexPositionVelocity3D() = default;
 
-	virtual void setToOriginImpl() { _estimate.setZero(); }
+	void setToOriginImpl() override { _estimate.setZero(); }
 
-	virtual void oplusImpl(const double* update) {
+	void oplusImpl(const double* update) override {
 		for (int k = 0; k < 6; k++) _estimate[k] += update[k];
 	}
 
-	virtual bool read(std::istream& /*is*/) { return false; }
+	bool read(std::istream& /*is*/) override { return false; }
 
-	virtual bool write(std::ostream& /*os*/) const { return false; }
+	bool write(std::ostream& /*os*/) const override { return false; }
 };
 
 // The odometry which links pairs of nodes together
@@ -54,12 +54,11 @@ public:
 
 	/** set the estimate of the to vertex, based on the estimate of the from
 	 * vertex in the edge. */
-	virtual void initialEstimate(const g2o::OptimizableGraph::VertexSet& from,
-	                             g2o::OptimizableGraph::Vertex* to) {
+	void initialEstimate(const g2o::OptimizableGraph::VertexSet& from,
+	                             g2o::OptimizableGraph::Vertex* to) override {
 		assert(from.size() == 1);
-		const VertexPositionVelocity3D* vi =
-			static_cast<const VertexPositionVelocity3D*>(*from.begin());
-		VertexPositionVelocity3D* vj = static_cast<VertexPositionVelocity3D*>(to);
+		const VertexPositionVelocity3D* vi = dynamic_cast<const VertexPositionVelocity3D*>(*from.begin());
+		auto vj = dynamic_cast<VertexPositionVelocity3D*>(to);
 		Vector6d viEst = vi->estimate();
 		Vector6d vjEst = viEst;
 
@@ -75,20 +74,18 @@ public:
 
 	/** override in your class if it's not possible to initialize the vertices in
 	 * certain combinations */
-	virtual double initialEstimatePossible(
+	double initialEstimatePossible(
 		const g2o::OptimizableGraph::VertexSet& from,
-		g2o::OptimizableGraph::Vertex* to) {
+		g2o::OptimizableGraph::Vertex* to) override {
 		// only works on sequential vertices
 		const VertexPositionVelocity3D* vi =
-			static_cast<const VertexPositionVelocity3D*>(*from.begin());
+			dynamic_cast<const VertexPositionVelocity3D*>(*from.begin());
 		return (to->id() - vi->id() == 1) ? 1.0 : -1.0;
 	}
 
-	void computeError() {
-		const VertexPositionVelocity3D* vi =
-			static_cast<const VertexPositionVelocity3D*>(_vertices[0]);
-		const VertexPositionVelocity3D* vj =
-			static_cast<const VertexPositionVelocity3D*>(_vertices[1]);
+	void computeError() override {
+		const auto vi = dynamic_cast<const VertexPositionVelocity3D*>(_vertices[0]);
+		const auto vj =dynamic_cast<const VertexPositionVelocity3D*>(_vertices[1]);
 
 		for (int k = 0; k < 3; k++) {
 			_error[k] = vi->estimate()[k] +
@@ -101,9 +98,9 @@ public:
 		}
 	}
 
-	virtual bool read(std::istream& /*is*/) { return false; }
+	bool read(std::istream& /*is*/) override { return false; }
 
-	virtual bool write(std::ostream& /*os*/) const { return false; }
+	bool write(std::ostream& /*os*/) const override { return false; }
 
 private:
 	double _dt;
@@ -115,21 +112,20 @@ class GPSObservationEdgePositionVelocity3D
 public:
 	GPSObservationEdgePositionVelocity3D(const Eigen::Vector3d& measurement,
 	                                     double noiseSigma) {
-		setMeasurement(measurement);
+		_measurement = measurement;
 		setInformation(Eigen::Matrix3d::Identity() / (noiseSigma * noiseSigma));
 	}
 
-	void computeError() {
-		const VertexPositionVelocity3D* v =
-			static_cast<const VertexPositionVelocity3D*>(_vertices[0]);
+	void computeError() override {
+		const auto v = dynamic_cast<const VertexPositionVelocity3D*>(_vertices[0]);
 		for (int k = 0; k < 3; k++) {
 			_error[k] = v->estimate()[k] - _measurement[k];
 		}
 	}
 
-	virtual bool read(std::istream& /*is*/) { return false; }
+	bool read(std::istream& /*is*/) override { return false; }
 
-	virtual bool write(std::ostream& /*os*/) const { return false; }
+	bool write(std::ostream& /*os*/) const override { return false; }
 };
 
-#endif  //  __TARGET_TYPES_6D_HPP__
+#endif  //  G2O_TARGET_TYPES_6D_HPP_
