@@ -5,13 +5,10 @@
 #include <g2o/core/base_unary_edge.h>
 #include <g2o/core/base_vertex.h>
 
-#include <Eigen/Core>
 #include <cassert>
+#include "EigenTypes.hpp"
 
 using namespace g2o;
-
-typedef Eigen::Matrix<double, 6, 1> Vector6d;
-typedef Eigen::Matrix<double, 6, 6> Matrix6d;
 
 class VertexPositionVelocity3D : public g2o::BaseVertex<6, Vector6d> {
 public:
@@ -24,9 +21,21 @@ public:
 		for (int k = 0; k < 6; k++) _estimate[k] += update[k];
 	}
 
-	bool read(std::istream& /*is*/) override { return false; }
+	bool read(std::istream& is) override {
+		for (int i = 0; i < _estimate.size() && is.good(); i++) {
+			is >> _estimate(i);
+		}
+		return is.good() || is.eof();
+	}
 
-	bool write(std::ostream& /*os*/) const override { return false; }
+	bool write(std::ostream& os) const override {
+		auto vector = estimate();
+		for (int m = 0; m < vector.rows(); m++) {
+		  os << vector[m] << " ";
+		}
+		return os.good();
+	}
+
 };
 
 // The odometry which links pairs of nodes together
@@ -34,6 +43,8 @@ class TargetOdometry3DEdge
 	: public g2o::BaseBinaryEdge<6, Eigen::Vector3d, VertexPositionVelocity3D,
 		VertexPositionVelocity3D> {
 public:
+	TargetOdometry3DEdge() = default;
+
 	TargetOdometry3DEdge(double dt, double noiseSigma) {
 		_dt = dt;
 
@@ -54,8 +65,7 @@ public:
 
 	/** set the estimate of the to vertex, based on the estimate of the from
 	 * vertex in the edge. */
-	void initialEstimate(const g2o::OptimizableGraph::VertexSet& from,
-	                             g2o::OptimizableGraph::Vertex* to) override {
+	void initialEstimate(const g2o::OptimizableGraph::VertexSet& from, g2o::OptimizableGraph::Vertex* to) override {
 		assert(from.size() == 1);
 		const VertexPositionVelocity3D* vi = dynamic_cast<const VertexPositionVelocity3D*>(*from.begin());
 		auto vj = dynamic_cast<VertexPositionVelocity3D*>(to);
@@ -98,9 +108,21 @@ public:
 		}
 	}
 
-	bool read(std::istream& /*is*/) override { return false; }
+	bool read(std::istream& is) override {
+		for (int i = 0; i < _measurement.size() && is.good(); i++) {
+			is >> _measurement(i);
+		}
+		readInformationMatrix(is);
+		return is.good() || is.eof();
+	}
 
-	bool write(std::ostream& /*os*/) const override { return false; }
+	bool write(std::ostream& os) const override {
+		auto vector = measurement();
+		for (int m = 0; m < vector.rows(); m++) {
+			os << vector[m] << " ";
+		}
+		return writeInformationMatrix(os);
+	}
 
 private:
 	double _dt;
@@ -110,8 +132,9 @@ private:
 class GPSObservationEdgePositionVelocity3D
 	: public g2o::BaseUnaryEdge<3, Eigen::Vector3d, VertexPositionVelocity3D> {
 public:
-	GPSObservationEdgePositionVelocity3D(const Eigen::Vector3d& measurement,
-	                                     double noiseSigma) {
+	GPSObservationEdgePositionVelocity3D() = default;
+
+	GPSObservationEdgePositionVelocity3D(const Eigen::Vector3d& measurement, double noiseSigma) {
 		_measurement = measurement;
 		setInformation(Eigen::Matrix3d::Identity() / (noiseSigma * noiseSigma));
 	}
@@ -123,9 +146,21 @@ public:
 		}
 	}
 
-	bool read(std::istream& /*is*/) override { return false; }
+	bool read(std::istream& is) override {
+		for (int i = 0; i < _measurement.size() && is.good(); i++) {
+			is >> _measurement(i);
+		}
+		readInformationMatrix(is);
+		return is.good() || is.eof();
+	}
 
-	bool write(std::ostream& /*os*/) const override { return false; }
+	bool write(std::ostream& os) const override {
+		auto vector = measurement();
+		for (int m = 0; m < vector.rows(); m++) {
+			os << vector[m] << " ";
+		}
+		return writeInformationMatrix(os);
+	}
 };
 
 #endif  //  G2O_TARGET_TYPES_6D_HPP_

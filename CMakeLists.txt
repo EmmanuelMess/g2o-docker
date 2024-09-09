@@ -17,6 +17,8 @@ include_directories(
 
 add_executable(${PROJECT_NAME}
     tutorial_slam2d.cpp
+    PositionGenerator.cpp
+    RegisterG2o.hpp
 )
 
 target_link_libraries(${PROJECT_NAME}
