@@ -36,6 +36,7 @@
 #include <g2o/stuff/sampler.h>
 
 #include <iostream>
+#include <vector>
 
 #include "RegisterG2o.hpp"
 #include "targetTypes6D.hpp"
@@ -56,11 +57,13 @@ static void printVector(const Vector& state) {
 
 int main() {
 	// Set up the parameters of the simulation
-	int numberOfTimeSteps = 1000;
+	const int numberOfTimeSteps = 1000;
 	const double processNoiseSigma = 1;
 	const double accelerometerNoiseSigma = 1;
 	const double gpsNoiseSigma = 1;
 	const double dt = 1;
+
+	std::vector<Vector6d> realStates;
 
 	PositionGenerator positionGenerator(processNoiseSigma, dt);
 
@@ -82,15 +85,19 @@ int main() {
 	VertexPositionVelocity3D *lastStateNode;
 
 	{
-		Vector6d state;
-		state.setZero();
-		state.head(3) = positionGenerator.getPosition();
-		state.tail(3) = positionGenerator.getVelocity();
+		{
+			Vector6d state;
+			state.setZero();
+			state.head(3) = positionGenerator.getPosition();
+			state.tail(3) = positionGenerator.getVelocity();
+
+			realStates.push_back(state);
+		}
 
 		// Construct the first vertex; this corresponds to the initial
 		// condition and register it with the optimiser
 		auto stateNode = new VertexPositionVelocity3D();
-		stateNode->setEstimate(state);
+		stateNode->setEstimate(Vector6d::Zero());
 		stateNode->setId(0);
 		optimizer.addVertex(stateNode);
 
@@ -105,6 +112,15 @@ int main() {
 		// Simulate the next step; update the state and compute the observation
 		positionGenerator.next();
 
+		{
+			Vector6d state;
+			state.setZero();
+			state.head(3) = positionGenerator.getPosition();
+			state.tail(3) = positionGenerator.getVelocity();
+
+			realStates.push_back(state);
+		}
+
 		// Construct the accelerometer measurement
 		const Vector3d accelerometerNoise(sampleGaussian(), sampleGaussian(), sampleGaussian());
 		const Vector3d accelerometerMeasurement = positionGenerator.getProcessNoise() + accelerometerNoiseSigma * accelerometerNoise;
@@ -113,13 +129,13 @@ int main() {
 		const Vector3d gpsNoise(sampleGaussian(), sampleGaussian(), sampleGaussian());
 		const Vector3d gpsMeasurement = positionGenerator.getPosition() + gpsNoiseSigma * gpsNoise;
 
-		std::cout << "position ";
+		std::cout << "real position ";
 		printVector(positionGenerator.getPosition());
-		std::cout << "velocity ";
+		std::cout << "real velocity ";
 		printVector(positionGenerator.getVelocity());
 		std::cout << "accelerometer ";
 		printVector(accelerometerMeasurement);
-		std::cout << "gps ";
+		std::cout << "gps position ";
 		printVector(gpsMeasurement);
 
 		// Construct vertex which corresponds to the current state of the target
@@ -129,18 +145,18 @@ int main() {
 		stateNode->setMarginalized(false);
 		optimizer.addVertex(stateNode);
 
-		auto toe = new TargetOdometry3DEdge(dt, accelerometerNoiseSigma);
-		toe->setVertex(0, lastStateNode);
-		toe->setVertex(1, stateNode);
-		auto vPrev = dynamic_cast<VertexPositionVelocity3D *>(lastStateNode);
-		auto vCurr = dynamic_cast<VertexPositionVelocity3D *>(stateNode);
-		toe->setMeasurement(accelerometerMeasurement);
-		optimizer.addEdge(toe);
+		auto targetOdometryEdge = new TargetOdometry3DEdge(dt, accelerometerNoiseSigma);
+		targetOdometryEdge->setVertex(0, lastStateNode);
+		targetOdometryEdge->setVertex(1, stateNode);
+		auto vPrev = lastStateNode;
+		auto vCurr = stateNode;
+		targetOdometryEdge->setMeasurement(accelerometerMeasurement);
+		optimizer.addEdge(targetOdometryEdge);
 
 		// compute the initial guess via the odometry
 		g2o::OptimizableGraph::VertexSet vPrevSet;
 		vPrevSet.insert(vPrev);
-		toe->initialEstimate(vPrevSet, vCurr);
+		targetOdometryEdge->initialEstimate(vPrevSet, vCurr);
 
 		lastStateNode = stateNode;
 
@@ -161,15 +177,18 @@ int main() {
 
 	// Print the results
 
-	std::cout << "state=";
+	std::cout << "real final position ";
 	printVector(positionGenerator.getPosition());
+	std::cout << "estimated final position ";
+	printVector(dynamic_cast<VertexPositionVelocity3D *>(optimizer.vertices().find(numberOfTimeSteps - 1)->second)->estimate().head(3));
 
-	Vector6d v1 = dynamic_cast<VertexPositionVelocity3D *>(optimizer.vertices().find((std::max)(numberOfTimeSteps - 2, 0))->second)->estimate();
-	Vector6d v2 = dynamic_cast<VertexPositionVelocity3D *>(optimizer.vertices().find((std::max)(numberOfTimeSteps - 1, 0))->second)->estimate();
-	std::cout << "v1=";
-	printVector(v1);
-	std::cout << "v2=";
-	printVector(v2);
-	std::cout << "delta state=";
-	printVector(v2 - v1);
+	double error = 0;
+
+	for (const auto& [id, vertex] : optimizer.vertices()) {
+		Eigen::Vector3d positionEst = dynamic_cast<VertexPositionVelocity3D *>(vertex)->estimate().head(3);
+		Eigen::Vector3d positionReal = realStates[id].head(3);
+		error += (positionReal - positionEst).array().abs().sum();
+	}
+
+	std::cout << "Error " << error;
 }
