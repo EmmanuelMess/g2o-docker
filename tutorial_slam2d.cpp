@@ -97,7 +97,7 @@ int main() {
 		// Construct the first vertex; this corresponds to the initial
 		// condition and register it with the optimiser
 		auto stateNode = new VertexPositionVelocity3D();
-		stateNode->setEstimate(Vector6d::Zero());
+		stateNode->setEstimate(State { .position = Eigen::Vector3d::Zero(), .velocity = Eigen::Vector3d::Zero() });
 		stateNode->setId(0);
 		optimizer.addVertex(stateNode);
 
@@ -180,12 +180,12 @@ int main() {
 	std::cout << "real final position ";
 	printVector(positionGenerator.getPosition());
 	std::cout << "estimated final position ";
-	printVector(dynamic_cast<VertexPositionVelocity3D *>(optimizer.vertices().find(numberOfTimeSteps - 1)->second)->estimate().head(3));
+	printVector(dynamic_cast<VertexPositionVelocity3D *>(optimizer.vertices().find(numberOfTimeSteps - 1)->second)->estimate().position);
 
 	double error = 0;
 
 	for (const auto& [id, vertex] : optimizer.vertices()) {
-		Eigen::Vector3d positionEst = dynamic_cast<VertexPositionVelocity3D *>(vertex)->estimate().head(3);
+		Eigen::Vector3d positionEst = dynamic_cast<VertexPositionVelocity3D *>(vertex)->estimate().position;
 		Eigen::Vector3d positionReal = realStates[id].head(3);
 		error += (positionReal - positionEst).array().abs().sum();
 	}

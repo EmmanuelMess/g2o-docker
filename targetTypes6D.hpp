@@ -10,28 +10,45 @@
 
 using namespace g2o;
 
-class VertexPositionVelocity3D : public g2o::BaseVertex<6, Vector6d> {
+struct State {
+	Eigen::Vector3d position;
+	Eigen::Vector3d velocity;
+};
+
+class VertexPositionVelocity3D : public g2o::BaseVertex<6, State> {
 public:
 	EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 	VertexPositionVelocity3D() = default;
 
-	void setToOriginImpl() override { _estimate.setZero(); }
+	void setToOriginImpl() override {
+		_estimate.position.setZero();
+		_estimate.velocity.setZero();
+	}
 
 	void oplusImpl(const double* update) override {
-		for (int k = 0; k < 6; k++) _estimate[k] += update[k];
+		for (int k = 0; k < 3; k++) {
+			_estimate.position[k] += update[k];
+			_estimate.velocity[k] += update[k+3];
+		}
 	}
 
 	bool read(std::istream& is) override {
-		for (int i = 0; i < _estimate.size() && is.good(); i++) {
-			is >> _estimate(i);
+		for (int i = 0; i < _estimate.position.size() && is.good(); i++) {
+			is >> _estimate.position(i);
+		}
+		for (int i = 0; i < _estimate.velocity.size() && is.good(); i++) {
+			is >> _estimate.velocity(i);
 		}
 		return is.good() || is.eof();
 	}
 
 	bool write(std::ostream& os) const override {
 		auto vector = estimate();
-		for (int m = 0; m < vector.rows(); m++) {
-		  os << vector[m] << " ";
+		for (int m = 0; m < vector.position.rows(); m++) {
+		  os << vector.position[m] << " ";
+		}
+		for (int m = 0; m < vector.velocity.rows(); m++) {
+			os << vector.velocity[m] << " ";
 		}
 		return os.good();
 	}
@@ -76,17 +93,17 @@ public:
 		auto vj = dynamic_cast<VertexPositionVelocity3D*>(to);
 		const auto oldState = vi->estimate();
 
-		const auto oldVelocity = oldState.tail(3);
+		const auto oldVelocity = oldState.velocity;
 		const auto measuredAcceleration = _measurement;
 		const auto estimatedPositionChange = _dt * oldVelocity + 0.5 * _dt * _dt * measuredAcceleration;
 		const auto estimatedVelocityChange = _dt * measuredAcceleration;
 
-		Vector6d stateChange;
-		stateChange.setZero();
-		stateChange.head(3) = estimatedPositionChange;
-		stateChange.tail(3) = estimatedVelocityChange;
+		State newState = {
+			.position = oldState.position + estimatedPositionChange,
+			.velocity = oldState.velocity + estimatedVelocityChange,
+		};
 
-		vj->setEstimate(oldState + stateChange);
+		vj->setEstimate(newState);
 	}
 
 	/** override in your class if it's not possible to initialize the vertices in
@@ -105,10 +122,10 @@ public:
 		const auto vertexInitial = dynamic_cast<const VertexPositionVelocity3D*>(_vertices[0]);
 		const auto vertexFinal =dynamic_cast<const VertexPositionVelocity3D*>(_vertices[1]);
 
-		const auto initialPosition = vertexInitial->estimate().head(3);
-		const auto initialVelocity = vertexInitial->estimate().tail(3);
-		const auto finalPosition = vertexFinal->estimate().head(3);
-		const auto finalVelocity = vertexFinal->estimate().tail(3);
+		const auto initialPosition = vertexInitial->estimate().position;
+		const auto initialVelocity = vertexInitial->estimate().velocity;
+		const auto finalPosition = vertexFinal->estimate().position;
+		const auto finalVelocity = vertexFinal->estimate().velocity;
 		const auto measuredAcceleration = _measurement;
 
 		const auto estimatedPosition = initialPosition + _dt * initialVelocity + (0.5 * _dt * _dt) * measuredAcceleration;
@@ -153,7 +170,7 @@ public:
 
 	void computeError() override {
 		const auto v = dynamic_cast<const VertexPositionVelocity3D*>(_vertices[0]);
-		const auto lastPosition = v->estimate().head(3);
+		const auto lastPosition = v->estimate().position;
 
 		_error = lastPosition - _measurement;
 	}
