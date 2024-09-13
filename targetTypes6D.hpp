@@ -39,26 +39,31 @@ public:
 };
 
 // The odometry which links pairs of nodes together
-class TargetOdometry3DEdge
-	: public g2o::BaseBinaryEdge<6, Eigen::Vector3d, VertexPositionVelocity3D,
-		VertexPositionVelocity3D> {
+class TargetOdometry3DEdge : public g2o::BaseBinaryEdge<6, Eigen::Vector3d, VertexPositionVelocity3D, VertexPositionVelocity3D> {
 public:
-	TargetOdometry3DEdge() = default;
+	TargetOdometry3DEdge() : _dt(0) {}
 
 	TargetOdometry3DEdge(double dt, double noiseSigma) {
 		_dt = dt;
 
-		double q = noiseSigma * noiseSigma;
-		double dt2 = dt * dt;
+		const double q = noiseSigma * noiseSigma;
+		const double dt2 = dt * dt;
 
 		// Process noise covariance matrix; this assumes an "impulse"
 		// noise model; we add a small stabilising term on the diagonal to make it
 		// invertible
+		const double a = dt2 * dt2 * q / 4 + 1e-4;
+		const double b = dt * dt2 * q / 2;
+		const double c = dt2 * q + 1e-4;
+		const double d = dt * dt2 * q / 2;
+
 		Matrix6d Q = Matrix6d::Zero();
-		Q(0, 0) = Q(1, 1) = Q(2, 2) = dt2 * dt2 * q / 4 + 1e-4;
-		Q(0, 3) = Q(1, 4) = Q(2, 5) = dt * dt2 * q / 2;
-		Q(3, 3) = Q(4, 4) = Q(5, 5) = dt2 * q + 1e-4;
-		Q(3, 0) = Q(4, 1) = Q(5, 2) = dt * dt2 * q / 2;
+		Q << a, 0, 0, b, 0, 0,
+				 0, a, 0, 0, b, 0,
+				 0, 0, a, 0, 0, b,
+				 d, 0, 0, c, 0, 0,
+				 0, d, 0, 0, c, 0,
+				 0, 0, d, 0, 0, c;
 
 		setInformation(Q.inverse());
 	}
@@ -84,28 +89,34 @@ public:
 
 	/** override in your class if it's not possible to initialize the vertices in
 	 * certain combinations */
-	double initialEstimatePossible(
-		const g2o::OptimizableGraph::VertexSet& from,
-		g2o::OptimizableGraph::Vertex* to) override {
+	double initialEstimatePossible(const g2o::OptimizableGraph::VertexSet& from, g2o::OptimizableGraph::Vertex* to) override {
 		// only works on sequential vertices
-		const VertexPositionVelocity3D* vi =
-			dynamic_cast<const VertexPositionVelocity3D*>(*from.begin());
-		return (to->id() - vi->id() == 1) ? 1.0 : -1.0;
+		const VertexPositionVelocity3D* vi = dynamic_cast<const VertexPositionVelocity3D*>(*from.begin());
+		if (to->id() - vi->id() == 1) {
+			return 1.0;
+		} else {
+			return -1.0;
+		}
 	}
 
 	void computeError() override {
-		const auto vi = dynamic_cast<const VertexPositionVelocity3D*>(_vertices[0]);
-		const auto vj =dynamic_cast<const VertexPositionVelocity3D*>(_vertices[1]);
+		const auto vertexInitial = dynamic_cast<const VertexPositionVelocity3D*>(_vertices[0]);
+		const auto vertexFinal =dynamic_cast<const VertexPositionVelocity3D*>(_vertices[1]);
 
-		for (int k = 0; k < 3; k++) {
-			_error[k] = vi->estimate()[k] +
-			            _dt * (vi->estimate()[k + 3] + 0.5 * _dt * _measurement[k]) -
-			            vj->estimate()[k];
-		}
-		for (int k = 3; k < 6; k++) {
-			_error[k] =
-				vi->estimate()[k] + _dt * _measurement[k - 3] - vj->estimate()[k];
-		}
+		const auto initialPosition = vertexInitial->estimate().head(3);
+		const auto initialVelocity = vertexInitial->estimate().tail(3);
+		const auto finalPosition = vertexFinal->estimate().head(3);
+		const auto finalVelocity = vertexFinal->estimate().tail(3);
+		const auto measuredAcceleration = _measurement;
+
+		const auto estimatedPosition = initialPosition + _dt * initialVelocity + (0.5 * _dt * _dt) * measuredAcceleration;
+    const auto positionError = estimatedPosition - finalPosition;
+
+		const auto estimatedVelocity = initialVelocity + _dt * measuredAcceleration;
+		const auto velocityError = estimatedVelocity - finalVelocity;
+
+		_error.head(3) = positionError;
+		_error.tail(3) = velocityError;
 	}
 
 	bool read(std::istream& is) override {
@@ -129,8 +140,7 @@ private:
 };
 
 // The GPS
-class GPSObservationEdgePositionVelocity3D
-	: public g2o::BaseUnaryEdge<3, Eigen::Vector3d, VertexPositionVelocity3D> {
+class GPSObservationEdgePositionVelocity3D : public g2o::BaseUnaryEdge<3, Eigen::Vector3d, VertexPositionVelocity3D> {
 public:
 	GPSObservationEdgePositionVelocity3D() = default;
 
@@ -141,9 +151,9 @@ public:
 
 	void computeError() override {
 		const auto v = dynamic_cast<const VertexPositionVelocity3D*>(_vertices[0]);
-		for (int k = 0; k < 3; k++) {
-			_error[k] = v->estimate()[k] - _measurement[k];
-		}
+		const auto lastPosition = v->estimate().head(3);
+
+		_error = lastPosition - _measurement;
 	}
 
 	bool read(std::istream& is) override {

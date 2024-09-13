@@ -46,8 +46,8 @@
 using namespace Eigen;
 using namespace g2o;
 
-template<typename Vector>
-static void printVector(const Vector& state) {
+template<typename Derived>
+static void printVector(const Eigen::MatrixBase<Derived>& state) {
 	std::cout << "[ ";
 	for (int m = 0; m < state.rows(); m++) {
 		std::cout << state[m] << " ";
@@ -61,7 +61,7 @@ int main() {
 	const double processNoiseSigma = 1;
 	const double accelerometerNoiseSigma = 1;
 	const double gpsNoiseSigma = 1;
-	const double dt = 1;
+	const double dt = 0.01;
 
 	std::vector<Vector6d> realStates;
 
