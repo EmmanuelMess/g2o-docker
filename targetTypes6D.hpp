@@ -74,17 +74,19 @@ public:
 		assert(from.size() == 1);
 		const VertexPositionVelocity3D* vi = dynamic_cast<const VertexPositionVelocity3D*>(*from.begin());
 		auto vj = dynamic_cast<VertexPositionVelocity3D*>(to);
-		Vector6d viEst = vi->estimate();
-		Vector6d vjEst = viEst;
+		const auto oldState = vi->estimate();
 
-		for (int m = 0; m < 3; m++) {
-			vjEst[m] += _dt * (vjEst[m + 3] + 0.5 * _dt * _measurement[m]);
-		}
+		const auto oldVelocity = oldState.tail(3);
+		const auto measuredAcceleration = _measurement;
+		const auto estimatedPositionChange = _dt * oldVelocity + 0.5 * _dt * _dt * measuredAcceleration;
+		const auto estimatedVelocityChange = _dt * measuredAcceleration;
 
-		for (int m = 0; m < 3; m++) {
-			vjEst[m + 3] += _dt * _measurement[m];
-		}
-		vj->setEstimate(vjEst);
+		Vector6d stateChange;
+		stateChange.setZero();
+		stateChange.head(3) = estimatedPositionChange;
+		stateChange.tail(3) = estimatedVelocityChange;
+
+		vj->setEstimate(oldState + stateChange);
 	}
 
 	/** override in your class if it's not possible to initialize the vertices in
